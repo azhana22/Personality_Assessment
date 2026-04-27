@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<!-- ============================================================
+     FILE: disc-assessment.html
+     DESCRIPTION: DISC Work Style Assessment Tool
+     BACKEND: Google Apps Script (configured in CONFIG section)
+     LAST UPDATED: 2025
+     
+     TABLE OF CONTENTS:
+     [1] HEAD — Meta, CDN Libraries, Global Styles
+     [2] BODY — HTML Structure
+         [2a] User Info Form (Name + Email input)
+         [2b] Assessment Form (24 questions + progress bar)
+         [2c] Results Container (charts, interpretation, score table)
+     [3] SCRIPT — JavaScript Logic
+         [3a] DATA: Question Bank (24 questions × 4 options each)
+         [3b] DATA: Conversion Table (raw score → percentile)
+         [3c] DATA: Interpretation Library (profile descriptions)
+         [3d] CONFIG: Output Mode (enable/disable render & fetch)
+         [3e] STATE: Global Variables
+         [3f] FUNCTION: startAssessment()
+         [3g] FUNCTION: renderQuestions()
+         [3h] FUNCTION: handleSelection()
+         [3i] FUNCTION: updateProgress()
+         [3j] FUNCTION: submitAssessment()
+         [3k] FUNCTION: determineProfile()
+         [3l] FUNCTION: getInterpretation()
+         [3m] FUNCTION: analyzeGaps()
+         [3n] FUNCTION: renderResultsPage()
+         [3o] FUNCTION: printReport() & resetAssessment()
+     ============================================================ -->
+
+
+<!-- ============================================================
+     [1] HEAD — Meta, CDN Libraries, Global Styles
+     ============================================================ -->
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tes Gaya Kerja Platform</title>
+
+    <!-- CSS Framework -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Chart Library for results visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* --- Font Import --- */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+        /* --- Base Layout --- */
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        }
+
+        /* --- Card Component --- */
+        .card {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            animation: slideUp 0.5s ease-out;
+        }
+
+        /* --- Card Entry Animation --- */
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* --- Primary Button --- */
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            transition: all 0.3s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 30px rgba(102, 126, 234, 0.3);
+        }
+
+        /* --- Disabled Option Label (when same option selected in both columns) --- */
+        .option input[type="radio"]:disabled + label {
+            cursor: not-allowed;
+            color: #a0aec0;
+            text-decoration: line-through;
+        }
+        .option:has(input[type="radio"]:disabled):hover {
+            background-color: transparent;
+        }
+
+        /* -------------------------------------------------------
+           Print / Save as PDF styles
+           Elements with class="no-print" are hidden when printing
+           ------------------------------------------------------- */
+        @media print {
+            body {
+                background: none;
+                font-family: 'Inter', sans-serif;
+                margin: 0;
+            }
+            .no-print { display: none; }
+            #mainSection {
+                box-shadow: none;
+                border: none;
+                padding: 0;
+                margin: 0;
+                width: 100%;
+                max-width: 100%;
+            }
+            #resultsContainer { display: block !important; }
+            #interpretationContainer > div { page-break-inside: avoid; }
+            .charts-grid  { page-break-inside: avoid; }
+            .print-table  { page-break-inside: avoid; }
+        }
+    </style>
+</head>
+
+
+<!-- ============================================================
+     [2] BODY — HTML Structure
+     ============================================================ -->
+<body class="bg-gray-100">
+<div class="container max-w-4xl mx-auto p-4 md:p-5">
+<div id="mainSection" class="card">
+
+    <div class="no-print">
+        <h1 class="text-3xl md:text-4xl font-bold text-center text-indigo-600 mb-2">Tes Gaya Kerja</h1>
+    </div>
+
+    <div id="assessmentTab">
+
+        <!-- ====================================================
+             [2a] USER INFO FORM
+             Shown first. Collects name & email before starting.
+             Hidden via JS after "Mulai Tes" is clicked.
+             ==================================================== -->
+        <div id="userInfoForm">
+
+            <!-- Instruction box (hidden on print) -->
+            <div class="bg-indigo-50 p-5 rounded-xl mb-6 no-print">
+                <h3 class="font-bold text-lg text-gray-800 mb-3">Petunjuk Pengerjaan:</h3>
+                <ol class="list-decimal list-inside space-y-2 text-gray-700">
+                    <li>Terdapat <strong>24 pertanyaan</strong>, masing-masing terdiri dari <strong>4 pernyataan</strong></li>
+                    <li>Untuk setiap pertanyaan, pilih:
+                        <ul class="list-disc list-inside ml-4 mt-2 space-y-1">
+                            <li>Satu pernyataan yang <strong>paling sesuai</strong> dengan diri Anda</li>
+                            <li>Satu pernyataan yang <strong>paling tidak sesuai</strong> dengan diri Anda</li>
+                        </ul>
+                    </li>
+                    <li>Jawablah dengan <strong>cepat dan jujur</strong>, sesuai kondisi diri Anda yang sebenarnya</li>
+                    <li>Pastikan setiap pertanyaan terjawab pada kedua kolom, dan <strong>tidak memilih pernyataan yang sama</strong></li>
+                </ol>
+            </div>
+
+            <!-- Input fields -->
+            <h2 class="text-2xl font-bold text-gray-700 mb-4 no-print">Informasi Peserta</h2>
+            <div class="space-y-4 no-print">
+                <div>
+                    <label for="userName" class="block mb-1 font-semibold text-gray-600">Nama Lengkap:</label>
+                    <input type="text" id="userName" placeholder="Masukkan nama lengkap Anda" required
+                           class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 transition">
+                </div>
+                <div>
+                    <label for="userEmail" class="block mb-1 font-semibold text-gray-600">Email:</label>
+                    <input type="email" id="userEmail" placeholder="Masukkan email Anda" required
+                           class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 transition">
+                </div>
+            </div>
+
+            <!-- Start button -->
+            <div class="text-center mt-6 no-print">
+                <button class="btn text-white font-bold py-3 px-10 rounded-full text-lg"
+                        onclick="startAssessment()">Mulai Tes</button>
+            </div>
+        </div>
+        <!-- END [2a] User Info Form -->
+
+
+        <!-- ====================================================
+             [2b] ASSESSMENT FORM
+             Hidden by default. Shown after startAssessment().
+             Contains: progress bar + question cards + submit btn.
+             Questions are injected dynamically by renderQuestions().
+             ==================================================== -->
+        <div id="assessmentForm" style="display:none;" class="no-print">
+
+            <!-- Progress bar -->
+            <div class="mb-4">
+                <div class="bg-gray-200 rounded-full h-2.5">
+                    <div id="progressBar"
+                         class="bg-indigo-600 h-2.5 rounded-full transition-all duration-500"
+                         style="width: 0%"></div>
+                </div>
+                <div id="progressText" class="text-center text-sm text-gray-600 mt-2 font-semibold">
+                    Pertanyaan 0 dari 24
+                </div>
+            </div>
+
+            <!-- Question cards injected here by renderQuestions() -->
+            <div id="questionsContainer" class="space-y-5"></div>
+
+            <!-- Submit button (disabled until all questions answered) -->
+            <div class="text-center mt-8">
+                <button id="submitButton"
+                        class="btn text-white font-bold py-3 px-10 rounded-full text-lg"
+                        onclick="submitAssessment()"
+                        disabled>Selesai & Lihat Hasil</button>
+            </div>
+        </div>
+        <!-- END [2b] Assessment Form -->
+
+
+        <!-- ====================================================
+             [2c] RESULTS CONTAINER
+             Hidden by default. Shown after submitAssessment().
+             Contains: profile cards, gap analysis, charts, score table.
+             Content is injected dynamically by renderResultsPage().
+             ==================================================== -->
+        <div id="resultsContainer" class="hidden">
+
+            <!-- Report header (name + date) -->
+            <div id="reportHeader">
+                <h2 class="text-3xl font-bold text-center text-gray-800">Laporan Hasil Tes Anda</h2>
+                <p id="reportUserName" class="text-center text-xl text-gray-600 mt-2"></p>
+                <p id="reportDate" class="text-center text-sm text-gray-500 mb-6"></p>
+            </div>
+
+            <!-- Success banner (hidden on print) -->
+            <div class="bg-green-100 text-green-800 p-4 rounded-lg text-center font-semibold my-6 no-print">
+                Assessment berhasil diselesaikan!
+            </div>
+
+            <!-- Dynamic content: profile interpretations, gap analysis, charts, score table -->
+            <div id="interpretationContainer" class="space-y-8"></div>
+
+            <!-- Action buttons (hidden on print) -->
+            <div class="flex justify-center items-center gap-4 mt-8 no-print">
+                <button class="btn text-white font-bold py-3 px-8 rounded-full text-lg"
+                        onclick="printReport()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline-block -mt-1 mr-2"
+                         viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd"
+                              d="M5 4v3H4a2 2 0 00-2 2v6a2 2 0 002 2h12a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z"
+                              clip-rule="evenodd" />
+                    </svg>
+                    Cetak Laporan
+                </button>
+                <button class="bg-gray-200 text-gray-700 font-bold py-3 px-8 rounded-full text-lg"
+                        onclick="resetAssessment()">Isi Assessment Baru</button>
+            </div>
+        </div>
+        <!-- END [2c] Results Container -->
+
+    </div><!-- end #assessmentTab -->
+</div><!-- end #mainSection -->
+</div><!-- end .container -->
+
+
+<!-- ============================================================
+     [3] SCRIPT — JavaScript Logic
+     ============================================================ -->
+<script>
+
+/* ============================================================
+   [3a] DATA: Question Bank
+   24 questions, each with 4 options mapped to a DISC letter.
+   DISC letters: D = Dominance, I = Influence,
+                 S = Steadiness, C = Compliance
+   To add/edit questions: modify this array.
+   To change order of options within a question: reorder the
+   objects inside each question's "options" array.
+   ============================================================ */
+const questions = [
+    {
+        id: 1,
+        options: [
+            { disc: "S", text: "Mudah bergaul, ramah, mudah setuju" },
+            { disc: "I", text: "Mempercayai, percaya pada orang lain" },
+            { disc: "D", text: "Petualang, suka mengambil risiko" },
+            { disc: "C", text: "Penuh toleransi, menghormati orang lain" }
+        ]
+    },
+    {
+        id: 2,
+        options: [
+            { disc: "D", text: "Yang penting adalah hasil" },
+            { disc: "C", text: "Kerjakan dengan benar, ketepatan sangat penting" },
+            { disc: "I", text: "Buat agar menyenangkan" },
+            { disc: "S", text: "Kerjakan bersama-sama" }
+        ]
+    },
+    {
+        id: 3,
+        options: [
+            { disc: "C", text: "Pendidikan, kebudayaan" },
+            { disc: "D", text: "Prestasi, penghargaan" },
+            { disc: "S", text: "Keselamatan, keamanan" },
+            { disc: "I", text: "Sosial, pertemuan kelompok" }
+        ]
+    },
+    {
+        id: 4,
+        options: [
+            { disc: "C", text: "Lembut, tertutup" },
+            { disc: "D", text: "Visionary/pandangan ke masa depan" },
+            { disc: "I", text: "Pusat perhatian/suka bersosialisasi" },
+            { disc: "S", text: "Pendamai, membawa ketenangan" }
+        ]
+    },
+    {
+        id: 5,
+        options: [
+            { disc: "C", text: "Menahan diri, bisa hidup tanpa memiliki" },
+            { disc: "D", text: "Membeli karena dorongan hasrat/impulse" },
+            { disc: "S", text: "Akan menunggu, tanpa tekanan" },
+            { disc: "I", text: "Akan membeli apa yang diinginkan" }
+        ]
+    },
+    {
+        id: 6,
+        options: [
+            { disc: "D", text: "Mengambil kendali, bersikap langsung/direct" },
+            { disc: "I", text: "Suka bergaul, antusias" },
+            { disc: "S", text: "Mudah ditebak, konsisten" },
+            { disc: "C", text: "Waspada berhati-hati" }
+        ]
+    },
+    {
+        id: 7,
+        options: [
+            { disc: "I", text: "Menyemangati orang lain" },
+            { disc: "C", text: "Berusaha mencapai kesempurnaan" },
+            { disc: "S", text: "Menjadi bagian dari kelompok" },
+            { disc: "D", text: "Ingin menetapkan goal/tujuan" }
+        ]
+    },
+    {
+        id: 8,
+        options: [
+            { disc: "S", text: "Bersahabat, mudah bergaul" },
+            { disc: "I", text: "Unik, bosan pada rutinitas" },
+            { disc: "D", text: "Aktif melakukan perubahan" },
+            { disc: "C", text: "Ingin segala sesuatu akurat dan pasti" }
+        ]
+    },
+    {
+        id: 9,
+        options: [
+            { disc: "D", text: "Sulit dikalahkan/ditundukan" },
+            { disc: "S", text: "Melaksanakan sesuai perintah" },
+            { disc: "I", text: "Bersemangat, periang" },
+            { disc: "C", text: "Ingin keteraturan, rapi" }
+        ]
+    },
+    {
+        id: 10,
+        options: [
+            { disc: "C", text: "Menjadi frustasi" },
+            { disc: "S", text: "Memendam perasaan dalam hati" },
+            { disc: "I", text: "Menyampaikan sudut pandang pribadi" },
+            { disc: "D", text: "Berani menghadapi oposisi" }
+        ]
+    },
+    {
+        id: 11,
+        options: [
+            { disc: "S", text: "Mudah, tidak suka pertentangan" },
+            { disc: "C", text: "Penuh dengan hal-hal kecil/detail" },
+            { disc: "I", text: "Berubah pada menit-menit terakhir" },
+            { disc: "D", text: "Mendesak/memaksa/agak kasar" }
+        ]
+    },
+    {
+        id: 12,
+        options: [
+            { disc: "D", text: "Saya akan pimpin mereka" },
+            { disc: "S", text: "Saya akan ikut/mengikuti" },
+            { disc: "I", text: "Saya akan pengaruhi/bujuk mereka" },
+            { disc: "C", text: "Saya akan mendapatkan fakta-faktanya" }
+        ]
+    },
+    {
+        id: 13,
+        options: [
+            { disc: "I", text: "Hidup/lincah banyak bicara" },
+            { disc: "D", text: "Cepat, penuh keyakinan" },
+            { disc: "S", text: "Berusaha menjaga keseimbangan" },
+            { disc: "C", text: "Berusaha patuh pada peraturan" }
+        ]
+    },
+    {
+        id: 14,
+        options: [
+            { disc: "D", text: "Ingin kemajuan/peningkatan" },
+            { disc: "S", text: "Puas dengan keadaan (tenang/mudah puas)" },
+            { disc: "I", text: "Menunjukan perasaan dengan terbuka" },
+            { disc: "C", text: "Rendah hati/sederhana" }
+        ]
+    },
+    {
+        id: 15,
+        options: [
+            { disc: "S", text: "Memikirkan orang lain dahulu" },
+            { disc: "D", text: "Suka bersaing/kompetitif, suka tantangan" },
+            { disc: "I", text: "Optimis berfikir positif" },
+            { disc: "C", text: "Sistematis, berfikir logis" }
+        ]
+    },
+    {
+        id: 16,
+        options: [
+            { disc: "C", text: "Mengelola waktu dengan efisien" },
+            { disc: "D", text: "Sering terburu-buru merasa ditekan" },
+            { disc: "I", text: "Hal-hal sosial adalah penting" },
+            { disc: "S", text: "Suka menyelesaikan hal yang mudah dimulai" }
+        ]
+    },
+    {
+        id: 17,
+        options: [
+            { disc: "C", text: "Tenang, pendiam, tertutup" },
+            { disc: "I", text: "Gembira, bebas, riang" },
+            { disc: "S", text: "Menyenangkan, baik hati" },
+            { disc: "D", text: "Menyolok berani" }
+        ]
+    },
+    {
+        id: 18,
+        options: [
+            { disc: "S", text: "Menyenangkan orang lain, ramah, penurut" },
+            { disc: "I", text: "Tertawa lepas, hidup" },
+            { disc: "D", text: "Pemberani, tegas" },
+            { disc: "C", text: "Pendiam, tertutup, tenang" }
+        ]
+    },
+    {
+        id: 19,
+        options: [
+            { disc: "S", text: "Menolak perubahan yang mendadak" },
+            { disc: "I", text: "Cenderung terlalu banyak berjanji" },
+            { disc: "C", text: "Mundur apabila di bawah tekanan" },
+            { disc: "D", text: "Tidak takut untuk berkelahi" }
+        ]
+    },
+    {
+        id: 20,
+        options: [
+            { disc: "S", text: "Menyediakan waktu untuk orang lain" },
+            { disc: "C", text: "Merencanakan masa depan, bersiap-siap" },
+            { disc: "I", text: "Menuju petualangan baru" },
+            { disc: "D", text: "Menerima penghargaan atas pencapaian target" }
+        ]
+    },
+    {
+        id: 21,
+        options: [
+            { disc: "D", text: "Ingin wewenang/kekuasaan lebih" },
+            { disc: "I", text: "Ingin kesempatan baru" },
+            { disc: "S", text: "Menghindari perselisihan/konflik apapun" },
+            { disc: "C", text: "Ingin arahan yang jelas" }
+        ]
+    },
+    {
+        id: 22,
+        options: [
+            { disc: "I", text: "Penyemangat/pendukung yang baik" },
+            { disc: "S", text: "Pendengar yang baik" },
+            { disc: "C", text: "Penganalisa yang baik" },
+            { disc: "D", text: "Pendelegasian yang baik/pandai membagi tugas" }
+        ]
+    },
+    {
+        id: 23,
+        options: [
+            { disc: "D", text: "Peraturan perlu diuji" },
+            { disc: "C", text: "Peraturan membuat menjadi adil" },
+            { disc: "I", text: "Peraturan membuat menjadi membosankan" },
+            { disc: "S", text: "Peraturan membuat menjadi aman" }
+        ]
+    },
+    {
+        id: 24,
+        options: [
+            { disc: "S", text: "Dapat dipercaya dan diandalkan" },
+            { disc: "I", text: "Kreatif, unik" },
+            { disc: "D", text: "Berorientasi pada hasil/profit/untung" },
+            { disc: "C", text: "Memegang teguh standar yang tinggi, akurat" }
+        ]
+    }
+];
+/* END [3a] Question Bank */
+
+
+/* ============================================================
+   [3b] DATA: Conversion Table
+   Converts raw counts (0–24) into percentile scores (1–100).
+   
+   Structure:
+     conversionTable[DISC_LETTER]['most'][raw_count]   → percentile
+     conversionTable[DISC_LETTER]['least'][raw_count]  → percentile
+   
+   'most'  = "Paling Sesuai" column  → Adapted Profile
+   'least' = "Paling Tidak Sesuai" column → Natural Profile
+   
+   DO NOT edit unless you have new normative data.
+   ============================================================ */
+const conversionTable = {
+    D: {
+        most:  { 0:4,  1:19, 2:25, 3:31, 4:40, 5:43, 6:49, 7:52, 8:58, 9:64, 10:76, 11:79, 12:82, 13:85, 14:88, 15:94, 16:97, 17:97, 18:97, 19:97, 20:100, 21:100, 22:100, 23:100, 24:100 },
+        least: { 0:100, 1:91, 2:79, 3:67, 4:58, 5:52, 6:46, 7:43, 8:40, 9:31, 10:28, 11:25, 12:19, 13:13, 14:10, 15:7,  16:4,  17:4,  18:4,  19:4,  20:4,   21:1,   22:1,   23:1,   24:1   }
+    },
+    I: {
+        most:  { 0:10, 1:22, 2:34, 3:46, 4:55, 5:67, 6:73, 7:79, 8:85, 9:91, 10:97, 11:97, 12:97, 13:97, 14:97, 15:97, 16:97, 17:100, 18:100, 19:100, 20:100, 21:100, 22:100, 23:100, 24:100 },
+        least: { 0:100, 1:91, 2:88, 3:67, 4:55, 5:46, 6:37, 7:28, 8:22, 9:16, 10:10, 11:7,  12:7,  13:7,  14:7,  15:7,  16:7,  17:7,   18:7,   19:1,   20:1,   21:1,   22:1,   23:1,   24:1   }
+    },
+    S: {
+        most:  { 0:13, 1:22, 2:28, 3:37, 4:46, 5:52, 6:58, 7:64, 8:73, 9:79, 10:85, 11:88, 12:97, 13:97, 14:97, 15:97, 16:97, 17:97, 18:97, 19:100, 20:100, 21:100, 22:100, 23:100, 24:100 },
+        least: { 0:100, 1:97, 2:88, 3:79, 4:67, 5:58, 6:52, 7:43, 8:37, 9:28, 10:22, 11:16, 12:10, 13:7,  14:7,  15:7,  16:7,  17:7,  18:7,  19:4,   20:4,   21:4,   22:4,   23:4,   24:4   }
+    },
+    C: {
+        most:  { 0:1,  1:19, 2:28, 3:40, 4:55, 5:64, 6:70, 7:82, 8:91, 9:97, 10:97, 11:97, 12:97, 13:97, 14:97, 15:100, 16:100, 17:100, 18:100, 19:100, 20:100, 21:100, 22:100, 23:100, 24:100 },
+        least: { 0:100, 1:97, 2:88, 3:79, 4:67, 5:58, 6:52, 7:46, 8:40, 9:31, 10:22, 11:16, 12:10, 13:7,  14:7,  15:7,  16:1,  17:1,  18:1,  19:1,   20:1,   21:1,   22:1,   23:1,   24:1   }
+    }
+};
+/* END [3b] Conversion Table */
+
+
+/* ============================================================
+   [3c] DATA: Interpretation Library
+   Text descriptions for each DISC profile combination.
+   
+   Keys follow this naming convention:
+     'Pure X'   → single dominant style (e.g. 'Pure D')
+     'X-Y'      → two-style combo (primary listed first)
+     'X-Y-Z'    → three-style combo
+     'Balanced' → all four styles within 15 points of each other
+   
+   To add a new interpretation: add a new key-value pair.
+   To edit an interpretation: find the key and update the string.
+   ============================================================ */
+const interpretations = {
+    'Balanced':
+        'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+
+    /* --- Pure Single Styles --- */
+    'Pure D':
+        'Memiliki rasa ego yang tinggi dan cenderung individualis dengan standar yang sangat tinggi. Lebih suka menganalisa masalah sendirian daripada bersama orang lain. Rasa egoisnya yang kuat membuatnya tidak nyaman di bawah kendali orang lain; lebih suka menjadi "boss" dan menetapkan standar tinggi. Menghindari sesuatu yang biasa-biasa dan cenderung mencari tantangan baru. Mampu memimpin situasi dan orang lain untuk mencapai sasarannya.',
+
+    'Pure I':
+        'Seorang yang antusias dan optimistik, lebih suka mencapai sasarannya melalui orang lain. Suka berhubungan dengan sesama - bahkan suka mengadakan "pesta" atau kegiatan berkumpul. Tidak suka bekerja sendirian dan cenderung bersama dengan orang lain dalam menyelesaikan proyek. Sangat menonjol dalam keterampilan berkomunikasi dan dikenal sebagai individu yang inspirasional. Membutuhkan supervisor untuk menentukan batas waktu yang jelas.',
+
+    'Pure S':
+        'Individu konsisten yang berusaha menjaga lingkungan/suasana yang tidak berubah. Bekerja dengan baik bersama orang-orang dengan berbagai kepribadian karena perilakunya yang terkendali dan rendah hati. Sabar, loyal dan suka menolong. Tidak bosan dengan rutinitas dan sangat baik bekerja dengan petunjuk dan peraturan yang jelas. Butuh waktu untuk menyesuaikan diri dengan perubahan.',
+
+    'Pure C':
+        'Seorang yang praktis, cakap dan unik. Mampu menilai diri sendiri dan kritis terhadap dirinya dan orang lain. Menyukai hal yang detil dan logis; secara alamiah sangat analitis. Cenderung malu dan tertutup; hati-hati dalam membuat keputusan berdasarkan logika, bukan emosi. Mengerjakan sesuatu dengan sistematis dan akurat.',
+
+    /* --- Two-Style Combinations (12 combos) --- */
+    'D-I': 'Tidak basa-basi dan tegas, cenderung merupakan seorang individualis yang kuat. Berpandangan jauh ke depan, progresif dan mau berkompetisi untuk mencapai sasaran. Seorang yang selalu ingin tahu dan mempunyai minat dengan cakupan yang luas. Logis, kritis dan tajam dalam memecahkan masalah. Mempunyai kemampuan memimpinan yang baik namun kadang tampak keras kepala.',
+    'D-S': 'Seorang yang objektif dan analitis. Ingin terlibat dalam situasi, dan juga ingin memberikan bantuan dan dukungan kepada orang yang dihormati. Termotivasi oleh target pribadi, berorientasi terhadap pekerjaan tapi juga menyukai hubungan dengan sesama. Karakternya yang tenang, stabil dan daya tahannya yang tinggi berkontribusi dalam keberhasilannya.',
+    'D-C': 'Sensitif terhadap permasalahan, dan memiliki kreativitas yang baik dalam memecahkan masalah. Dapat menyelesaikan tugas-tugas penting dalam waktu singkat karena mempunyai keputusan yang kuat. Tekun dan memiliki reaksi yang cepat. Akan meneliti dan mengejar semua kemungkinan dalam mencari solusi permasalahan. Cenderung perfeksionis.',
+    'I-D': 'Seorang pemimpin integratif yang bekerja dengan dan melalui orang lain. Ramah, memiliki perhatian yang tinggi akan orang dan mempunyai kemampuan untuk memperoleh hormat dari berbagai tipe orang. Melakukan pekerjaan dengan cara yang bersahabat. Kadang bertindak impulsif, terlalu antusias dan sangat banyak bicara.',
+    'I-S': 'Mengesankan orang akan kehangatan, simpati dan pengertiannya. Memiliki ketenangan dalam sebagian besar situasi sosial dan jarang tidak menyenangkan orang lain. Banyak orang datang padanya karena kelihatan sebagai pendengar yang baik. Tidak akan memaksakan idenya pada orang lain. Merupakan "penjaga damai" yang sebenarnya.',
+    'I-C': 'Seorang yang ramah dan suka berteman; merasa nyaman walaupun dengan orang asing. Dapat mengembangkan hubungan baru dengan mudah. Sangat sosial, menunjukkan kepedulian dan persahabatan ketika melakukan tugas. Cenderung perfeksionis secara alamiah, dan akan mengisolasi diri jika diperlukan untuk melaksanakan pekerjaan.',
+    'S-D': 'Seorang yang objektif dan analitis. Ingin terlibat dalam situasi, dan juga ingin memberikan bantuan dan dukungan. Termotivasi oleh target pribadi, menyukai orang-orang, tetapi juga mempunyai kemampuan untuk berorientasi pada pekerjaan. Karakternya yang tenang, stabil dan daya tahannya berkontribusi pada keberhasilannya.',
+    'S-I': 'Mengesankan orang akan kehangatan, simpati dan pengertiannya. Memiliki ketenangan dalam sebagian besar situasi sosial. Cenderung sangat demonstratif dan emosinya tampak jelas bagi orang di sekitarnya. Dapat menjadi sangat toleran dan sabar kepada mereka yang tidak produktif di pekerjaan.',
+    'S-C': 'Orang yang baik secara alamiah dan sangat berorientasi detil. Peduli dengan orang-orang di sekitarnya dan mempunyai kualitas yang membuatnya sangat teliti dalam penyelesaian tugas. Mempertimbangkan sekelilingnya dengan hati-hati sebelum membuat keputusan untuk melihat pengaruhnya pada mereka.',
+    'C-D': 'Sangat berorientasi pada tugas dan sensitif pada permasalahan. Lebih mempedulikan tugas yang ada dibanding orang-orang di sekitarnya, termasuk perasaan mereka. Sangat kukuh/keras dan mempunyai pendekatan yang efektif dalam pemecahan masalah. Membuat keputusan berdasar pada fakta, bukan emosi.',
+    'C-I': 'Seseorang yang analitis, berwatak hati-hati dan ramah pada saat merasa nyaman. Dapat mengembangkan hubungan baru dengan mudah ketika ingin melakukannya. Cenderung perfeksionis secara alami, dan akan mengisolasi diri jika diperlukan untuk melaksanakan pekerjaan. Sangat berorientasi pada kualitas.',
+    'C-S': 'Berpikir sistematis dan cenderung mengikuti prosedur dalam kehidupan pribadi dan pekerjaannya. Teratur dan memiliki perencanaan yang baik, teliti dan fokus pada detil. Bertindak dengan penuh kebijaksanaan, diplomatis dan jarang menentang rekan kerja dengan sengaja. Sungguh-sungguh mengharapkan akurasi dan standar tinggi.',
+
+    /* --- Three-Style Combinations (12 combos) --- */
+    'D-I-S': 'Fokus pada penyelesaian pekerjaan dan menunjukkan penghargaan yang tinggi kepada orang lain. Mampu menggerakkan orang dan pekerjaan karena keterampilan berpikir ke depan. Tidak berorientasi detail, fokus pada target keseluruhan. Enerjik dan sosial, mampu memotivasi sambil menyelesaikan pekerjaan.',
+    'D-I-C': 'Menggabungkan antara kesenangan dengan pekerjaan. Menyukai hubungan dengan sesama tetapi juga dapat mengerjakan hal-hal detail dengan tepat. Ramah namun akan menilai orang dan tugas secara hati-hati. Terkadang melalaikan perencanaan yang seksama dan beralih ke proyek baru tanpa pertimbangan menyeluruh.',
+    'D-S-C': 'Seorang yang obyektif dan analitis. Ingin terlibat dalam situasi, dan memberikan bantuan serta dukungan kepada orang yang dihormati. Termotivasi oleh target pribadi, berorientasi pada pekerjaan tapi juga menyukai hubungan sesama. Mandiri, cermat, dan memiliki tindak lanjut yang baik.',
+    'I-D-S': 'Seorang yang bersahabat dan sosial; juga suka mengendalikan situasi dan menjadi pemimpin. Menyelesaikan tugas melalui keterampilan sosial, peduli, dan menerima orang lain. Akan meminta bantuan jika perlu dan senang membagi kebanggaan dengan kelompok. Seorang team player sekaligus team leader.',
+    'I-D-C': 'Sangat berorientasi pada tugas dan juga menyukai orang. Baik dalam merekrut, bersahabat, tetapi menyukai keadaan di mana tugas harus dilakukan dengan benar. Kadang tampak dingin dan mendominasi. Perlu belajar untuk sungguh-sungguh mendengarkan orang lain daripada selalu berpikir apa yang ingin dikatakan.',
+    'I-S-C': 'Individu yang berorientasi pada orang, lancar berkomunikasi, dan loyal. Cenderung sensitif dan mempunyai standar yang tinggi. Keputusan dibuat berdasarkan fakta. Bersahabat, antusias, dan ingin diterima sebagai anggota kelompok, serta ingin tahu apa yang diharapkan dari Anda.',
+    'S-D-C': 'Sabar, terkontrol, dan suka menggali fakta. Tenang dan ramah, merencanakan pekerjaan dengan hati-hati tetapi agresif dalam mengumpulkan data. Seorang yang konsisten, suka menolong, dan berhubungan baik dengan hampir semua orang. Keterampilan interpersonal melebihi orientasi tugas.',
+    'S-I-C': 'Orang yang stabil dan ramah yang berusaha membangun hubungan positif. Bisa sangat berorientasi detail jika situasi membutuhkan. Sekali membuat keputusan, sulit mengubah pendirian. Menyukai hubungan dengan orang dan cenderung mendukung pihak yang lemah. Cenderung moderat, cermat, dan dapat diandalkan.',
+    'C-D-S': 'Berorientasi pada hal detail dan mempunyai standar tinggi untuk diri sendiri. Logis dan analitis, selalu berpikir ada ruang untuk perbaikan. Kompetitif dan ingin menghasilkan pekerjaan bermutu terbaik. Sensitif terhadap orang, tetapi sifat logis dapat menutupinya. Mantap dan dapat diandalkan.',
+    'C-I-S': 'Individu yang berorientasi pada orang, mampu menggabungkan ketepatan dan loyalitas. Peka dan mempunyai standar yang tinggi. Menginginkan stabilitas, pengakuan sosial, dan perhatian pribadi. Pencari fakta yang sangat baik dan akan membuat keputusan yang baik setelah mengumpulkan data.',
+
+    /* --- Four-Style Combinations (Balanced fallback)
+         NOTE: All four-letter combos map to the same "Balanced" text.
+         This covers all 24 possible orderings of D, I, S, C.
+         You can replace individual entries here for more nuanced text
+         if needed, but typically "Balanced" covers them all. --- */
+    'D-I-S-C': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'D-I-C-S': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'D-S-I-C': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'D-S-C-I': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'D-C-I-S': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'D-C-S-I': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'I-D-S-C': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'I-D-C-S': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'I-S-D-C': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'I-S-C-D': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'I-C-D-S': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'I-C-S-D': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'S-D-I-C': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'S-D-C-I': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'S-I-D-C': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'S-I-C-D': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'S-C-D-I': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'S-C-I-D': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'C-D-I-S': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'C-D-S-I': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'C-I-D-S': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'C-I-S-D': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'C-S-D-I': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.',
+    'C-S-I-D': 'Anda memiliki komposisi kepribadian yang sangat seimbang. Ini menunjukkan fleksibilitas yang luar biasa, di mana Anda dapat menampilkan setiap gaya perilaku (Dominance, Influence, Steadiness, Compliance) sesuai dengan tuntutan situasi. Kekuatan Anda adalah kemampuan adaptasi yang tinggi. Namun, tantangannya adalah kecenderungan untuk merasa ditarik ke berbagai arah yang berbeda, yang terkadang dapat menyebabkan keraguan atau kesulitan dalam mengambil keputusan yang tegas.'
+};
+/* END [3c] Interpretation Library */
+
+
+/* ============================================================
+   [3d] CONFIG: Output Mode
+   Controls what happens after the user submits the assessment.
+   
+   ENABLE_RENDER: true  → Show results page in the browser
+   ENABLE_FETCH:  true  → Send data to Google Apps Script backend
+   
+   You can set either to false independently. At least one must be true.
+   
+   To change the backend URL: update the fetch() URL in [3j] submitAssessment().
+   ============================================================ */
+const CONFIG = Object.freeze({
+    ENABLE_RENDER: true,   // Show results on screen after submit
+    ENABLE_FETCH:  true    // Send results to Google Apps Script backend
+});
+
+/* Validation: at least one output mode must be enabled */
+if (!CONFIG.ENABLE_RENDER && !CONFIG.ENABLE_FETCH) {
+    throw new Error('CONFIG ERROR: At least one of ENABLE_RENDER or ENABLE_FETCH must be true.');
+}
+/* END [3d] CONFIG */
+
+
+/* ============================================================
+   [3e] STATE: Global Variables
+   These hold runtime data across function calls.
+   DO NOT modify these directly — they are managed by functions below.
+   ============================================================ */
+let currentUser      = {};   // Stores { name, email } from the user info form
+let responses        = [];   // Array of { M, J, selectedM_index, selectedJ_index } per question
+let chartInstances   = {};   // Holds Chart.js instances for cleanup before re-render
+let currentResultData = {};  // Final computed result object passed to render & fetch
+/* END [3e] State */
+
+
+/* ============================================================
+   [3f] FUNCTION: startAssessment()
+   Called when "Mulai Tes" button is clicked.
+   Validates name + email, then shows the assessment form.
+   ============================================================ */
+function startAssessment() {
+    const name  = document.getElementById('userName').value.trim();
+    const email = document.getElementById('userEmail').value.trim();
+
+    if (!name || !email) {
+        alert('Mohon isi nama dan email.');
+        return;
+    }
+
+    currentUser = { name, email };
+
+    /* Initialize responses array: one entry per question, all null */
+    responses = new Array(questions.length).fill(null).map(() => ({
+        M: null,               // "Paling Sesuai" (Most) DISC letter
+        J: null,               // "Paling Tidak Sesuai" (Least) DISC letter
+        selectedM_index: null, // Option index selected for Most
+        selectedJ_index: null  // Option index selected for Least
+    }));
+
+    document.getElementById('userInfoForm').style.display   = 'none';
+    document.getElementById('assessmentForm').style.display = 'block';
+
+    renderQuestions();
+    updateProgress();
+}
+/* END [3f] */
+
+
+/* ============================================================
+   [3g] FUNCTION: renderQuestions()
+   Dynamically builds all 24 question cards and injects them
+   into #questionsContainer.
+   Each card has two columns: "Paling Sesuai" (M) and
+   "Paling Tidak Sesuai" (J), each with 4 radio options.
+   ============================================================ */
+function renderQuestions() {
+    const container = document.getElementById('questionsContainer');
+    container.innerHTML = '';
+
+    questions.forEach((q, index) => {
+        const questionCard = document.createElement('div');
+        questionCard.className = 'question-card bg-gray-50 p-5 rounded-lg border-2 border-transparent';
+
+        questionCard.innerHTML = `
+            <span class="question-number font-bold text-indigo-600">Pertanyaan ${q.id}</span>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+
+                <!-- Column: Paling Sesuai (Most / M) -->
+                <div class="option-group bg-white p-4 rounded-lg border">
+                    <h4 class="font-semibold text-gray-700 mb-2">Paling Sesuai</h4>
+                    ${q.options.map((opt, i) => `
+                        <div class="option p-2 rounded-md hover:bg-indigo-50">
+                            <input type="radio"
+                                   id="q${index}_m_${i}"
+                                   name="q${index}_m"
+                                   value="${opt.disc}"
+                                   onchange="handleSelection(${index}, 'M', ${i})">
+                            <label for="q${index}_m_${i}" class="ml-2 text-gray-800 cursor-pointer">
+                                ${opt.text}
+                            </label>
+                        </div>`).join('')}
+                </div>
+
+                <!-- Column: Paling Tidak Sesuai (Least / J) -->
+                <div class="option-group bg-white p-4 rounded-lg border">
+                    <h4 class="font-semibold text-gray-700 mb-2">Paling Tidak Sesuai</h4>
+                    ${q.options.map((opt, i) => `
+                        <div class="option p-2 rounded-md hover:bg-indigo-50">
+                            <input type="radio"
+                                   id="q${index}_j_${i}"
+                                   name="q${index}_j"
+                                   value="${opt.disc}"
+                                   onchange="handleSelection(${index}, 'J', ${i})">
+                            <label for="q${index}_j_${i}" class="ml-2 text-gray-800 cursor-pointer">
+                                ${opt.text}
+                            </label>
+                        </div>`).join('')}
+                </div>
+
+            </div>`;
+
+        container.appendChild(questionCard);
+    });
+}
+/* END [3g] */
+
+
+/* ============================================================
+   [3h] FUNCTION: handleSelection(qIndex, column, optIndex)
+   Called on every radio change.
+   Prevents the same option from being selected in both columns
+   by disabling the matching radio in the other column.
+   
+   qIndex    : question index (0–23)
+   column    : 'M' (Most) or 'J' (Least)
+   optIndex  : index of the option selected (0–3)
+   ============================================================ */
+function handleSelection(qIndex, column, optIndex) {
+    /* Store the new selection */
+    responses[qIndex][column]                   = questions[qIndex].options[optIndex].disc;
+    responses[qIndex][`selected${column}_index`] = optIndex;
+
+    /* If the same option was already selected in the other column, clear it */
+    const otherColumn = (column === 'M') ? 'J' : 'M';
+    const otherIndex  = responses[qIndex][`selected${otherColumn}_index`];
+
+    if (otherIndex === optIndex) {
+        const radioToUncheck = document.querySelector(`input[id="q${qIndex}_${otherColumn.toLowerCase()}_${optIndex}"]`);
+        if (radioToUncheck) radioToUncheck.checked = false;
+        responses[qIndex][otherColumn]                   = null;
+        responses[qIndex][`selected${otherColumn}_index`] = null;
+    }
+
+    /* Disable the selected-M option in the J column, and vice versa */
+    document.querySelectorAll(`input[name="q${qIndex}_m"]`).forEach((radio, i) => {
+        radio.disabled = (i === responses[qIndex]['selectedJ_index']);
+    });
+    document.querySelectorAll(`input[name="q${qIndex}_j"]`).forEach((radio, i) => {
+        radio.disabled = (i === responses[qIndex]['selectedM_index']);
+    });
+
+    updateProgress();
+}
+/* END [3h] */
+
+
+/* ============================================================
+   [3i] FUNCTION: updateProgress()
+   Counts fully answered questions (both M and J selected)
+   and updates the progress bar and label.
+   Also enables the submit button when all 24 are answered.
+   ============================================================ */
+function updateProgress() {
+    const answered = responses.filter(r => r.M && r.J).length;
+    const progress = (answered / questions.length) * 100;
+
+    document.getElementById('progressBar').style.width       = progress + '%';
+    document.getElementById('progressText').textContent      = `Pertanyaan ${answered} dari ${questions.length} selesai`;
+    document.getElementById('submitButton').disabled         = (answered !== questions.length);
+}
+/* END [3i] */
+
+
+/* ============================================================
+   [3j] FUNCTION: submitAssessment()
+   Called when "Selesai & Lihat Hasil" is clicked.
+   
+   Steps:
+     1. Validate all questions are answered
+     2. Tally raw scores (how many times each DISC letter was chosen)
+     3. Convert raw scores to percentiles via conversionTable
+     4. Determine Adapted Profile (from M / "Paling Sesuai")
+     5. Determine Natural Profile (from J / "Paling Tidak Sesuai")
+     6. Run tasks based on CONFIG: render results and/or send to backend
+   
+   BACKEND URL: Change the fetch() URL below to update the endpoint.
+   ============================================================ */
+function submitAssessment() {
+    /* Step 1: Validate */
+    const incomplete = responses.some(r => !r.M || !r.J);
+    if (incomplete) {
+        alert('Harap mengisi semua pertanyaan.');
+        return;
+    }
+
+    /* Step 2: Tally raw scores */
+    const rawScores = {
+        M: { D: 0, I: 0, S: 0, C: 0 }, // "Most" counts
+        J: { D: 0, I: 0, S: 0, C: 0 }  // "Least" counts
+    };
+    responses.forEach(res => {
+        if (res.M) rawScores.M[res.M]++;
+        if (res.J) rawScores.J[res.J]++;
+    });
+
+    /* Step 3: Convert to percentiles */
+    const percentages = { M: {}, J: {} };
+    ['D', 'I', 'S', 'C'].forEach(style => {
+        percentages.M[style] = conversionTable[style]['most'][rawScores.M[style]]  || 0;
+        percentages.J[style] = conversionTable[style]['least'][rawScores.J[style]] || 0;
+    });
+
+    /* Step 4 & 5: Determine profiles */
+    const adaptedProfile = determineProfile(percentages.M); // From "Most"  → how others see you
+    const naturalProfile = determineProfile(percentages.J); // From "Least" → your core self
+
+    /* Build final result object */
+    currentResultData = {
+        user: currentUser,
+        rawScores,
+        percentages,
+        adaptedProfile,
+        naturalProfile,
+        date: new Date().toLocaleDateString('id-ID', {
+            year: 'numeric', month: 'long', day: 'numeric'
+        })
+    };
+
+    /* Show loading state while tasks run */
+    const mainSection = document.getElementById('mainSection');
+    mainSection.innerHTML = `
+        <div class="text-center p-10">
+            <p class="text-gray-600">Memproses hasil Anda...</p>
+        </div>`;
+
+    /* Step 6: Execute tasks based on CONFIG */
+    const tasks = [];
+
+    /* --- Task A: Send to Google Apps Script backend --- */
+    if (CONFIG.ENABLE_FETCH) {
+        /* ⬇️ TO CHANGE BACKEND: Update the URL below */
+        const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzfywGHk5rWnWximQW8CGrydMjKOxxDd5IAl_vqynUi7fXjLYk3G4_Lo3ODKnM2ZDn-Ig/exec';
+
+        tasks.push(
+            fetch(BACKEND_URL, {
+                method: 'POST',
+                body: JSON.stringify(currentResultData)
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('API RESPONSE:', data);
+                if (data.status !== 'success') {
+                    throw new Error(data.message || 'API gagal');
+                }
+                return data;
+            })
+        );
+    }
+
+    /* --- Task B: Render results in the browser --- */
+    if (CONFIG.ENABLE_RENDER) {
+        tasks.push(
+            new Promise(resolve => {
+                setTimeout(() => {
+                    document.getElementById('assessmentForm').style.display = 'none';
+                    document.getElementById('resultsContainer').classList.remove('hidden');
+                    renderResultsPage(currentResultData);
+                    resolve(true);
+                }, 300); // Small delay for smoother UX
+            })
+        );
+    }
+
+    /* --- Handle outcomes --- */
+    Promise.all(tasks)
+        .then(() => {
+            /* If only fetching (no render), show a simple thank-you message */
+            if (!CONFIG.ENABLE_RENDER) {
+                mainSection.innerHTML = `
+                    <div class="text-center p-10">
+                        <h2 class="text-2xl font-bold text-green-600">Terima kasih!</h2>
+                        <p class="text-gray-600 mt-2">Data Anda berhasil disimpan.</p>
+                    </div>`;
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            mainSection.innerHTML = `
+                <div class="text-center p-10">
+                    <h2 class="text-xl text-red-600">Terjadi kesalahan</h2>
+                    <p class="text-gray-600 mt-2">Silakan coba lagi.</p>
+                </div>`;
+        });
+}
+/* END [3j] */
+
+
+/* ============================================================
+   [3k] FUNCTION: determineProfile(percentages)
+   Determines the DISC profile label from a set of percentile scores.
+   
+   Logic:
+     - Sort all 4 styles by score (highest first)
+     - If 3 or more secondary styles are within 15 pts of the top → 'Balanced'
+     - If no style is within 15 pts of primary → 'Pure X'
+     - Otherwise → 'X-Y' or 'X-Y-Z' (sorted by score descending)
+   
+   percentages: object like { D: 72, I: 55, S: 40, C: 60 }
+   Returns: string like 'D-I', 'Pure S', 'Balanced', etc.
+   ============================================================ */
+function determineProfile(percentages) {
+    const scores = Object.entries(percentages)
+        .map(([letter, value]) => ({ letter, value }));
+    scores.sort((a, b) => b.value - a.value);
+
+    const primary   = scores[0];
+    const secondary = scores.filter(s =>
+        s.value >= primary.value - 15 && s.letter !== primary.letter
+    );
+
+    if (secondary.length >= 3) return 'Balanced';
+    if (secondary.length === 0) return `Pure ${primary.letter}`;
+
+    const profileArray = [primary, ...secondary];
+    profileArray.sort((a, b) => b.value - a.value);
+    return profileArray.map(p => p.letter).join('-');
+}
+/* END [3k] */
+
+
+/* ============================================================
+   [3l] FUNCTION: getInterpretation(profileType)
+   Looks up the text description for a given profile type.
+   Falls back to a letter-sorted key match if exact key not found.
+   
+   profileType: string from determineProfile(), e.g. 'D-I', 'Pure C'
+   Returns: description string
+   ============================================================ */
+function getInterpretation(profileType) {
+    /* Direct lookup first */
+    if (interpretations[profileType]) {
+        return interpretations[profileType];
+    }
+
+    /* Fallback: try matching by sorted letters (handles alternate orderings) */
+    const key      = profileType.replace('Pure ', '');
+    const keyParts = key.split('-');
+    const allKeys  = Object.keys(interpretations);
+
+    const matchingKey = allKeys.find(k => {
+        if (k.startsWith('Pure') || k === 'Balanced') return false;
+        const kParts = k.split('-');
+        if (kParts.length !== keyParts.length) return false;
+        return kParts.sort().join('') === keyParts.sort().join('');
+    });
+
+    return interpretations[matchingKey] || 'Interpretasi untuk kombinasi profil ini tidak ditemukan.';
+}
+/* END [3l] */
+
+
+/* ============================================================
+   [3m] FUNCTION: analyzeGaps(mostPercentages, leastPercentages)
+   Computes the gap between Adapted (M) and Natural (J) scores
+   for each DISC style, and returns an HTML string.
+   
+   Gap size categories:
+     < 10 pts  → Kecil (Small)
+     10–19 pts → Sedang (Medium)
+     20–29 pts → Besar (Large)
+     30+ pts   → Sangat Besar (Very Large)
+   
+   Average gap determines the overall summary text.
+   ============================================================ */
+function analyzeGaps(mostPercentages, leastPercentages) {
+    let analysisHTML = '';
+
+    const gaps = {
+        D: mostPercentages.D - leastPercentages.D,
+        I: mostPercentages.I - leastPercentages.I,
+        S: mostPercentages.S - leastPercentages.S,
+        C: mostPercentages.C - leastPercentages.C
+    };
+
+    /* Build per-style gap blocks */
+    Object.entries(gaps).forEach(([style, gap]) => {
+        const absGap = Math.abs(gap);
+        let gapLabel = '';
+        if      (absGap < 10) gapLabel = 'Gap Kecil (0-9 poin)';
+        else if (absGap < 20) gapLabel = 'Gap Sedang (10-19 poin)';
+        else if (absGap < 30) gapLabel = 'Gap Besar (20-29 poin)';
+        else                  gapLabel = 'Gap Sangat Besar (30+ poin)';
+
+        let direction = `Gaya ${style} sama di kedua kondisi (${mostPercentages[style]}%)`;
+        if      (gap > 0) direction = `Gaya ${style} lebih tinggi di Adaptasi (${mostPercentages[style]}%) dibanding Natural (${leastPercentages[style]}%)`;
+        else if (gap < 0) direction = `Gaya ${style} lebih tinggi di Natural (${leastPercentages[style]}%) dibanding Adaptasi (${mostPercentages[style]}%)`;
+
+        analysisHTML += `
+            <div class="p-4 mb-3 bg-gray-50 rounded-lg">
+                <strong class="font-semibold text-gray-800">${style}: ${gapLabel}</strong>
+                <p class="text-sm text-gray-600">${direction}</p>
+            </div>`;
+    });
+
+    /* Overall summary based on average gap */
+    const avgGap = Object.values(gaps).reduce((sum, gap) => sum + Math.abs(gap), 0) / 4;
+    let summary = '';
+    if (avgGap < 10) {
+        summary = 'Anda memiliki perilaku yang sangat konsisten di berbagai situasi. Gaya natural dan adaptasi Anda tidak banyak berbeda, menunjukkan Anda merasa nyaman menjadi diri sendiri.';
+    } else if (avgGap < 20) {
+        summary = 'Anda menunjukkan fleksibilitas perilaku yang sehat. Ada kemampuan adaptasi yang wajar untuk menyesuaikan diri dengan lingkungan tanpa kehilangan identitas natural.';
+    } else {
+        summary = 'Anda memiliki kemampuan adaptasi perilaku yang sangat tinggi. Ini menunjukkan fleksibilitas yang luar biasa, namun perhatikan apakah ini menimbulkan kelelahan atau stres dalam jangka panjang karena adanya perbedaan signifikan antara diri Anda yang natural dan yang Anda tampilkan.';
+    }
+
+    analysisHTML += `
+        <div class="mt-6 p-4 bg-indigo-50 rounded-lg">
+            <strong class="font-semibold text-indigo-800">Ringkasan Adaptasi:</strong>
+            <p class="text-indigo-700 mt-1">${summary}</p>
+        </div>`;
+
+    return analysisHTML;
+}
+/* END [3m] */
+
+
+/* ============================================================
+   [3n] FUNCTION: renderResultsPage(data)
+   Injects all result content into #interpretationContainer
+   and renders Chart.js visualizations.
+   
+   Rendered sections (in order):
+     1. Natural Profile card  (from J / Least)
+     2. Adapted Profile card  (from M / Most)
+     3. Gap Analysis          (from analyzeGaps())
+     4. Line Chart + Radar Chart (Chart.js)
+     5. Score Detail Table
+   
+   To change chart colors: update backgroundColor / borderColor
+   in the lineChartData and radarChartData objects below.
+   ============================================================ */
+function renderResultsPage({ user, naturalProfile, adaptedProfile, percentages, date, rawScores }) {
+    const container = document.getElementById('interpretationContainer');
+
+    /* Set report header */
+    document.getElementById('reportUserName').textContent = user.name;
+    document.getElementById('reportDate').textContent     = `Tanggal Asesmen: ${date}`;
+
+    /* Inject all result HTML */
+    container.innerHTML = `
+
+        <!-- Section 1: Natural Profile -->
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="text-2xl font-bold text-purple-700 mb-2">Profil Natural Anda: ${naturalProfile}</h3>
+            <p class="text-gray-600 mb-4">Ini adalah gaya inti Anda, bagaimana Anda cenderung bertindak di bawah tekanan dan saat paling otentik.</p>
+            <p class="text-gray-700 leading-relaxed">${getInterpretation(naturalProfile)}</p>
+        </div>
+
+        <!-- Section 2: Adapted Profile -->
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="text-2xl font-bold text-indigo-700 mb-2">Profil Adaptasi Anda: ${adaptedProfile}</h3>
+            <p class="text-gray-600 mb-4">Ini adalah bagaimana Anda cenderung dilihat oleh orang lain dan beradaptasi di lingkungan Anda saat ini.</p>
+            <p class="text-gray-700 leading-relaxed">${getInterpretation(adaptedProfile)}</p>
+        </div>
+
+        <!-- Section 3: Gap Analysis -->
+        <div class="bg-white p-6 rounded-xl shadow-md">
+            <h3 class="text-2xl font-bold text-gray-800 mb-4">Wawasan Perilaku (Analisis Gap)</h3>
+            <div class="text-gray-700">${analyzeGaps(percentages.M, percentages.J)}</div>
+        </div>
+
+        <!-- Section 4: Charts -->
+        <div class="grid md:grid-cols-2 gap-8 mt-8 charts-grid">
+            <div class="bg-white p-4 rounded-xl shadow-md">
+                <h3 class="text-xl font-bold text-center text-gray-800 mb-4">Grafik Garis</h3>
+                <canvas id="lineChart"></canvas>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-md">
+                <h3 class="text-xl font-bold text-center text-gray-800 mb-4">Grafik Radar</h3>
+                <canvas id="radarChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Section 5: Score Detail Table -->
+        <div class="bg-white p-6 rounded-xl shadow-md mt-8 print-table">
+            <h3 class="text-2xl font-bold text-gray-800 mb-4">Rincian Skor</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-center">
+                    <thead class="bg-gray-100">
+                        <tr>
+                            <th class="p-3 font-semibold text-gray-700">Aspek</th>
+                            <th class="p-3 font-semibold text-gray-700">Skor Mentah (Adaptasi)</th>
+                            <th class="p-3 font-semibold text-gray-700">Persentase (Adaptasi)</th>
+                            <th class="p-3 font-semibold text-gray-700">Skor Mentah (Natural)</th>
+                            <th class="p-3 font-semibold text-gray-700">Persentase (Natural)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${['D', 'I', 'S', 'C'].map(style => `
+                        <tr class="border-t">
+                            <td class="p-3 font-bold">${style}</td>
+                            <td class="p-3">${rawScores.M[style]}</td>
+                            <td class="p-3">${percentages.M[style]}%</td>
+                            <td class="p-3">${rawScores.J[style]}</td>
+                            <td class="p-3">${percentages.J[style]}%</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+
+    /* Destroy old chart instances before creating new ones */
+    if (chartInstances.line)  chartInstances.line.destroy();
+    if (chartInstances.radar) chartInstances.radar.destroy();
+
+    /* Wait for DOM to update before rendering charts */
+    setTimeout(() => {
+
+        /* Line Chart */
+        const lineChartData = {
+            labels: ['D', 'I', 'S', 'C'],
+            datasets: [
+                {
+                    label: 'Adaptasi',
+                    data: Object.values(percentages.M),
+                    backgroundColor: 'rgba(99, 102, 241, 0.2)',  /* Indigo fill */
+                    borderColor:     'rgba(99, 102, 241, 1)',
+                    fill: true,
+                    tension: 0.1
+                },
+                {
+                    label: 'Natural',
+                    data: Object.values(percentages.J),
+                    backgroundColor: 'rgba(248, 113, 113, 0.2)', /* Red fill */
+                    borderColor:     'rgba(248, 113, 113, 1)',
+                    fill: true,
+                    tension: 0.1
+                }
+            ]
+        };
+        chartInstances.line = new Chart(
+            document.getElementById('lineChart').getContext('2d'),
+            { type: 'line', data: lineChartData, options: { scales: { y: { beginAtZero: true, max: 100 } }, animation: { duration: 0 } } }
+        );
+
+        /* Radar Chart */
+        const radarChartData = {
+            labels: ['Dominance', 'Influence', 'Steadiness', 'Compliance'],
+            datasets: [
+                {
+                    label: 'Adaptasi',
+                    data: Object.values(percentages.M),
+                    backgroundColor: 'rgba(99, 102, 241, 0.2)',
+                    borderColor:     'rgba(99, 102, 241, 1)'
+                },
+                {
+                    label: 'Natural',
+                    data: Object.values(percentages.J),
+                    backgroundColor: 'rgba(248, 113, 113, 0.2)',
+                    borderColor:     'rgba(248, 113, 113, 1)'
+                }
+            ]
+        };
+        chartInstances.radar = new Chart(
+            document.getElementById('radarChart').getContext('2d'),
+            { type: 'radar', data: radarChartData, options: { scales: { r: { beginAtZero: true, max: 100, pointLabels: { font: { size: 10 } } } }, animation: { duration: 0 } } }
+        );
+
+    }, 100);
+}
+/* END [3n] */
+
+
+/* ============================================================
+   [3o] FUNCTION: printReport() & resetAssessment()
+   
+   printReport()      → Triggers browser print dialog.
+                        Elements with class="no-print" are hidden.
+   
+   resetAssessment()  → Hides the results and shows the user
+                        info form again for a new submission.
+   ============================================================ */
+function printReport() {
+    window.print();
+}
+
+function resetAssessment() {
+    document.getElementById('resultsContainer').classList.add('hidden');
+    document.getElementById('userInfoForm').style.display = 'block';
+    document.getElementById('mainSection').scrollIntoView({ behavior: 'smooth' });
+}
+/* END [3o] */
+
+</script>
+<!-- END [3] Script -->
+
+</body>
+</html>
