@@ -869,7 +869,7 @@ function submitAssessment() {
     /* --- Task A: Send to backend (runs in background, does not block render)
      * TO CHANGE BACKEND: Update the URL below */
     if (CONFIG.ENABLE_FETCH) {
-        fetch('https://script.google.com/macros/s/AKfycbzfywGHk5rWnWximQW8CGrydMjKOxxDd5IAl_vqynUi7fXjLYk3G4_Lo3ODKnM2ZDn-Ig/exec', {
+        fetch('https://script.google.com/macros/s/AKfycbyc3cHtdDcc3t8ptbUCxOSPHDb3UNqz7Mn6c5rfhqQ_7FIhHJM8EF00bnmZeP3HB-fyIQ/exec', {
             method: 'POST',
             body: JSON.stringify(currentResultData)
         })
