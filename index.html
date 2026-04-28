@@ -856,71 +856,46 @@ function submitAssessment() {
         })
     };
 
-    /* Show loading state while tasks run */
-    const mainSection = document.getElementById('mainSection');
-    mainSection.innerHTML = `
-        <div class="text-center p-10">
-            <p class="text-gray-600">Memproses hasil Anda...</p>
-        </div>`;
+    /* Step 6: Execute tasks based on CONFIG
+     *
+     * Fetch (Task A) and Render (Task B) run in parallel — intentionally.
+     * Render does NOT wait for fetch, so a slow backend never blocks the
+     * results page. Fetch uses the same plain POST pattern as the original
+     * working version. Result is logged to console only.
+     */
 
-    /* Step 6: Execute tasks based on CONFIG */
-    const tasks = [];
-
-    /* --- Task A: Send to Google Apps Script backend --- */
+    /* --- Task A: Send to backend (runs in background, does not block render)
+     * TO CHANGE BACKEND: Update the URL below */
     if (CONFIG.ENABLE_FETCH) {
-        /* ⬇️ TO CHANGE BACKEND: Update the URL below */
-        const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzfywGHk5rWnWximQW8CGrydMjKOxxDd5IAl_vqynUi7fXjLYk3G4_Lo3ODKnM2ZDn-Ig/exec';
-
-        tasks.push(
-            fetch(BACKEND_URL, {
-                method: 'POST',
-                body: JSON.stringify(currentResultData)
-            })
-            .then(res => res.json())
-            .then(data => {
-                console.log('API RESPONSE:', data);
-                if (data.status !== 'success') {
-                    throw new Error(data.message || 'API gagal');
-                }
-                return data;
-            })
-        );
-    }
-
-    /* --- Task B: Render results in the browser --- */
-    if (CONFIG.ENABLE_RENDER) {
-        tasks.push(
-            new Promise(resolve => {
-                setTimeout(() => {
-                    document.getElementById('assessmentForm').style.display = 'none';
-                    document.getElementById('resultsContainer').classList.remove('hidden');
-                    renderResultsPage(currentResultData);
-                    resolve(true);
-                }, 300); // Small delay for smoother UX
-            })
-        );
-    }
-
-    /* --- Handle outcomes --- */
-    Promise.all(tasks)
-        .then(() => {
-            /* If only fetching (no render), show a simple thank-you message */
-            if (!CONFIG.ENABLE_RENDER) {
-                mainSection.innerHTML = `
-                    <div class="text-center p-10">
-                        <h2 class="text-2xl font-bold text-green-600">Terima kasih!</h2>
-                        <p class="text-gray-600 mt-2">Data Anda berhasil disimpan.</p>
-                    </div>`;
+        fetch('https://script.google.com/macros/s/AKfycbzfywGHk5rWnWximQW8CGrydMjKOxxDd5IAl_vqynUi7fXjLYk3G4_Lo3ODKnM2ZDn-Ig/exec', {
+            method: 'POST',
+            body: JSON.stringify(currentResultData)
+        })
+        .then(res => res.json())
+        .then(data => {
+            console.log('API RESPONSE:', data);
+            if (data.status === 'success') {
+                console.log('Fetch: data saved. PDF:', data.url);
+            } else {
+                console.warn('Fetch: backend returned error:', data.message);
             }
         })
-        .catch(err => {
-            console.error(err);
-            mainSection.innerHTML = `
-                <div class="text-center p-10">
-                    <h2 class="text-xl text-red-600">Terjadi kesalahan</h2>
-                    <p class="text-gray-600 mt-2">Silakan coba lagi.</p>
-                </div>`;
-        });
+        .catch(err => console.error('Fetch error:', err));
+    }
+
+    /* --- Task B: Render results immediately, independent of fetch --- */
+    if (CONFIG.ENABLE_RENDER) {
+        document.getElementById('assessmentForm').style.display = 'none';
+        document.getElementById('resultsContainer').classList.remove('hidden');
+        renderResultsPage(currentResultData);
+    } else {
+        /* ENABLE_RENDER: false — show thank-you message only */
+        document.getElementById('mainSection').innerHTML = `
+            <div class="text-center p-10">
+                <h2 class="text-2xl font-bold text-green-600">Terima kasih!</h2>
+                <p class="text-gray-600 mt-2">Data Anda berhasil disimpan.</p>
+            </div>`;
+    }
 }
 /* END [3j] */
 
