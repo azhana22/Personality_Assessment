@@ -851,6 +851,8 @@ function submitAssessment() {
         percentages,
         adaptedProfile,
         naturalProfile,
+        interpretationAdapted: getInterpretation(adaptedProfile),
+        interpretationNatural: getInterpretation(naturalProfile),
         date: new Date().toLocaleDateString('id-ID', {
             year: 'numeric', month: 'long', day: 'numeric'
         })
